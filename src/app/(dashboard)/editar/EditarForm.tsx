@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Save, Trash2, CheckCircle, XCircle } from "lucide-react";
+import { FileUpload } from "@/components/FileUpload";
 import type {
   Funcionario,
   HistoricoFuncional,
@@ -32,6 +33,14 @@ export function EditarForm({ funcionario }: { funcionario: Funcionario }) {
   // Estado de desvinculação
   const [desvinculado, setDesvinculado] = useState(funcionario.desvinculado);
 
+  // ✅ Estados para arquivos
+  const [arquivoDesvinculacao, setArquivoDesvinculacao] = useState<File | null>(
+    null
+  );
+  const [arquivosLicenca, setArquivosLicenca] = useState<{
+    [key: number]: File | null;
+  }>({});
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
@@ -39,55 +48,108 @@ export function EditarForm({ funcionario }: { funcionario: Funcionario }) {
 
     const formData = new FormData(e.currentTarget);
 
-    // Montar objeto de atualização
-    const updates = {
-      nome_completo: formData.get("nome_completo"),
-      email: formData.get("email"),
-      telefone: formData.get("telefone"),
-      data_nascimento: formData.get("data_nascimento") || null,
-      estado_civil: formData.get("estado_civil"),
-      lotacao: formData.get("lotacao"),
-      cargo_funcao: formData.get("cargo_funcao"),
-      disciplina: formData.get("disciplina"),
-      matricula_1: formData.get("matricula_1"),
-      matricula_2: formData.get("matricula_2"),
-      jornada_trabalho: formData.get("jornada_trabalho"),
+    try {
+      // ✅ 1. Upload de arquivo de desvinculação (se houver)
+      let urlDesvinculacao = funcionario.documento_desvinculacao_url;
 
-      // Campos extras
-      historico_funcional: historico,
-      status_probatorio: formData.get("status_probatorio"),
-      avaliacoes_periodicas: avaliacoes,
+      if (arquivoDesvinculacao) {
+        const uploadForm = new FormData();
+        uploadForm.append("file", arquivoDesvinculacao);
+        uploadForm.append("cpf", funcionario.cpf);
+        uploadForm.append("tipo", "desvinculacao");
 
-      // Desvinculação
-      desvinculado,
-      data_desvinculacao: desvinculado
-        ? formData.get("data_desvinculacao") || new Date().toISOString()
-        : null,
-      motivo_desvinculacao: desvinculado
-        ? formData.get("motivo_desvinculacao")
-        : null,
+        const uploadRes = await fetch("/api/upload", {
+          method: "POST",
+          body: uploadForm,
+        });
 
-      // Licenças
-      licencas_medicas: licencas,
-    };
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          urlDesvinculacao = uploadData.url;
+        }
+      }
 
-    // Enviar atualização
-    const response = await fetch(`/api/funcionarios/${funcionario.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    });
+      // ✅ 2. Upload de arquivos de licenças médicas (se houver)
+      const licencasComArquivos = await Promise.all(
+        licencas.map(async (lic, index) => {
+          let documentoUrl = lic.documento_url;
 
-    setLoading(false);
+          if (arquivosLicenca[index]) {
+            const uploadForm = new FormData();
+            uploadForm.append("file", arquivosLicenca[index]!);
+            uploadForm.append("cpf", funcionario.cpf);
+            uploadForm.append("tipo", `licenca_medica_${index}`);
 
-    if (response.ok) {
-      setMessage({ type: "success", text: "Dados atualizados com sucesso!" });
-      setTimeout(() => {
-        router.push(`/funcionarios/${funcionario.id}`);
-        router.refresh();
-      }, 1500);
-    } else {
-      setMessage({ type: "error", text: "Erro ao atualizar dados" });
+            const uploadRes = await fetch("/api/upload", {
+              method: "POST",
+              body: uploadForm,
+            });
+
+            if (uploadRes.ok) {
+              const uploadData = await uploadRes.json();
+              documentoUrl = uploadData.url;
+            }
+          }
+
+          return {
+            ...lic,
+            documento_url: documentoUrl,
+          };
+        })
+      );
+
+      // ✅ 3. Montar objeto de atualização
+      const updates = {
+        nome_completo: formData.get("nome_completo"),
+        email: formData.get("email"),
+        telefone: formData.get("telefone"),
+        data_nascimento: formData.get("data_nascimento") || null,
+        estado_civil: formData.get("estado_civil"),
+        lotacao: formData.get("lotacao"),
+        cargo_funcao: formData.get("cargo_funcao"),
+        disciplina: formData.get("disciplina"),
+        matricula_1: formData.get("matricula_1"),
+        matricula_2: formData.get("matricula_2"),
+        jornada_trabalho: formData.get("jornada_trabalho"),
+
+        // Campos extras
+        historico_funcional: historico,
+        status_probatorio: formData.get("status_probatorio"),
+        avaliacoes_periodicas: avaliacoes,
+        licencas_medicas: licencasComArquivos, // ✅ Com URLs dos arquivos
+
+        // Desvinculação
+        desvinculado,
+        data_desvinculacao: desvinculado
+          ? formData.get("data_desvinculacao") || new Date().toISOString()
+          : null,
+        motivo_desvinculacao: desvinculado
+          ? formData.get("motivo_desvinculacao")
+          : null,
+        documento_desvinculacao_url: desvinculado ? urlDesvinculacao : null, // ✅ Com URL do arquivo
+      };
+
+      // ✅ 4. Enviar atualização
+      const response = await fetch(`/api/funcionarios/${funcionario.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+
+      if (response.ok) {
+        setMessage({ type: "success", text: "Dados atualizados com sucesso!" });
+        setTimeout(() => {
+          router.push(`/funcionarios/${funcionario.id}`);
+          router.refresh();
+        }, 1500);
+      } else {
+        setMessage({ type: "error", text: "Erro ao atualizar dados" });
+      }
+    } catch (error) {
+      console.error("Erro ao salvar:", error);
+      setMessage({ type: "error", text: "Erro ao processar arquivos" });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -117,6 +179,42 @@ export function EditarForm({ funcionario }: { funcionario: Funcionario }) {
 
   const removerHistorico = (index: number) => {
     setHistorico(historico.filter((_, i) => i !== index));
+  };
+
+  // Funções para avaliações
+  const adicionarAvaliacao = () => {
+    setAvaliacoes([
+      ...avaliacoes,
+      {
+        descricao: "",
+        resultado: "",
+        data: new Date().toISOString().split("T")[0],
+      },
+    ]);
+  };
+
+  const removerAvaliacao = (index: number) => {
+    setAvaliacoes(avaliacoes.filter((_, i) => i !== index));
+  };
+
+  // Funções para licenças
+  const adicionarLicenca = () => {
+    setLicencas([
+      ...licencas,
+      {
+        data_inicio: new Date().toISOString().split("T")[0],
+        data_fim: new Date().toISOString().split("T")[0],
+        motivo: "",
+      },
+    ]);
+  };
+
+  const removerLicenca = (index: number) => {
+    setLicencas(licencas.filter((_, i) => i !== index));
+    // Remove também o arquivo associado
+    const novosArquivos = { ...arquivosLicenca };
+    delete novosArquivos[index];
+    setArquivosLicenca(novosArquivos);
   };
 
   return (
@@ -426,7 +524,203 @@ export function EditarForm({ funcionario }: { funcionario: Funcionario }) {
         </div>
       </details>
 
-      {/* Desvincular Funcionário (OPCIONAL) */}
+      {/* Avaliações Periódicas (OPCIONAL) */}
+      <details className="bg-white rounded-lg shadow">
+        <summary className="px-6 py-4 cursor-pointer font-semibold text-gray-900 hover:bg-gray-50">
+          Avaliações Periódicas (Opcional)
+        </summary>
+        <div className="px-6 pb-6 space-y-4">
+          {avaliacoes.map((aval, index) => (
+            <div
+              key={index}
+              className="border border-gray-200 rounded-lg p-4 relative"
+            >
+              <button
+                type="button"
+                onClick={() => removerAvaliacao(index)}
+                className="absolute top-2 right-2 p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
+              >
+                <Trash2 size={16} />
+              </button>
+
+              <div className="space-y-3">
+                <textarea
+                  value={aval.descricao}
+                  onChange={(e) => {
+                    const newAvaliacoes = [...avaliacoes];
+                    newAvaliacoes[index] = {
+                      ...aval,
+                      descricao: e.target.value,
+                    };
+                    setAvaliacoes(newAvaliacoes);
+                  }}
+                  placeholder="Descrição da avaliação"
+                  rows={2}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  value={aval.resultado}
+                  onChange={(e) => {
+                    const newAvaliacoes = [...avaliacoes];
+                    newAvaliacoes[index] = {
+                      ...aval,
+                      resultado: e.target.value,
+                    };
+                    setAvaliacoes(newAvaliacoes);
+                  }}
+                  placeholder="Resultado (Ex: Aprovado, Satisfatório...)"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="date"
+                  value={aval.data}
+                  onChange={(e) => {
+                    const newAvaliacoes = [...avaliacoes];
+                    newAvaliacoes[index] = { ...aval, data: e.target.value };
+                    setAvaliacoes(newAvaliacoes);
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          ))}
+
+          <button
+            type="button"
+            onClick={adicionarAvaliacao}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+          >
+            <Plus size={18} />
+            Adicionar Avaliação
+          </button>
+        </div>
+      </details>
+
+      {/* ✅ Licenças Médicas COM UPLOAD */}
+      <details className="bg-white rounded-lg shadow">
+        <summary className="px-6 py-4 cursor-pointer font-semibold text-gray-900 hover:bg-gray-50">
+          Licenças Médicas (Opcional)
+        </summary>
+        <div className="px-6 pb-6 space-y-4">
+          {licencas.map((lic, index) => (
+            <div
+              key={index}
+              className="border border-gray-200 rounded-lg p-4 relative"
+            >
+              <button
+                type="button"
+                onClick={() => removerLicenca(index)}
+                className="absolute top-2 right-2 p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
+              >
+                <Trash2 size={16} />
+              </button>
+
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Data Início
+                    </label>
+                    <input
+                      type="date"
+                      value={lic.data_inicio}
+                      onChange={(e) => {
+                        const newLicencas = [...licencas];
+                        newLicencas[index] = {
+                          ...lic,
+                          data_inicio: e.target.value,
+                        };
+                        setLicencas(newLicencas);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Data Fim
+                    </label>
+                    <input
+                      type="date"
+                      value={lic.data_fim}
+                      onChange={(e) => {
+                        const newLicencas = [...licencas];
+                        newLicencas[index] = {
+                          ...lic,
+                          data_fim: e.target.value,
+                        };
+                        setLicencas(newLicencas);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Motivo
+                  </label>
+                  <textarea
+                    value={lic.motivo}
+                    onChange={(e) => {
+                      const newLicencas = [...licencas];
+                      newLicencas[index] = { ...lic, motivo: e.target.value };
+                      setLicencas(newLicencas);
+                    }}
+                    placeholder="Descreva o motivo da licença"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* ✅ UPLOAD DE ATESTADO */}
+                <FileUpload
+                  onFileSelect={(file) => {
+                    setArquivosLicenca({ ...arquivosLicenca, [index]: file });
+                  }}
+                  currentUrl={lic.documento_url}
+                  label="Atestado Médico (Opcional)"
+                  accept=".pdf,image/*"
+                />
+              </div>
+            </div>
+          ))}
+
+          <button
+            type="button"
+            onClick={adicionarLicenca}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+          >
+            <Plus size={18} />
+            Adicionar Licença Médica
+          </button>
+        </div>
+      </details>
+
+      {/* Status Probatório */}
+      <details className="bg-white rounded-lg shadow">
+        <summary className="px-6 py-4 cursor-pointer font-semibold text-gray-900 hover:bg-gray-50">
+          Status (Opcional)
+        </summary>
+        <div className="px-6 pb-6">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Estágio Probatório
+          </label>
+          <select
+            name="status_probatorio"
+            defaultValue={funcionario.status_probatorio || ""}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Selecione...</option>
+            <option value="Em andamento">Em andamento</option>
+            <option value="Aprovado">Aprovado</option>
+            <option value="Reprovado">Reprovado</option>
+          </select>
+        </div>
+      </details>
+
+      {/* ✅ Desvincular Funcionário COM UPLOAD */}
       <details className="bg-white rounded-lg shadow">
         <summary className="px-6 py-4 cursor-pointer font-semibold text-gray-900 hover:bg-gray-50">
           Desvincular Funcionário (Opcional - Reversível)
@@ -480,6 +774,14 @@ export function EditarForm({ funcionario }: { funcionario: Funcionario }) {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+
+              {/* ✅ UPLOAD DE DOCUMENTO DE DESVINCULAÇÃO */}
+              <FileUpload
+                onFileSelect={setArquivoDesvinculacao}
+                currentUrl={funcionario.documento_desvinculacao_url}
+                label="Documento de Desvinculação (Opcional)"
+                accept=".pdf,.doc,.docx,image/*"
+              />
             </div>
           )}
         </div>
